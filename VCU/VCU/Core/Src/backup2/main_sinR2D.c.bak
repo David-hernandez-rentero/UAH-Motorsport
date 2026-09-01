@@ -1,0 +1,339 @@
+/* USER CODE BEGIN Header */
+/**
+ *****************************************************************************
+ * @file           : main.c
+ * @author         : David Hernández Rentero
+ * @project        : main
+ * @date           : 2026-07-30
+ * @editor         : Visual Studio Code
+ *
+ * @brief          : Main program body
+ * @brief          : Implements Relative Current Control (0-100%)
+ * @brief          : Sets Safety Limits: Max AC = 15A, Max Brake = 0A
+ * @brief          : Implements Plausibility Check between APPS1 and APPS2
+ * @brief          : Implements Drive Enable/Disable via Button Press
+ * @brief          : FIXED: Node ID reverted to 0x1B
+ ******************************************************************************
+ */
+/* USER CODE END Header */
+
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+#include "adc.h"
+#include "fdcan.h"
+#include "gpio.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+#include <string.h> // For memset
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+
+// --- Control Limits ---
+// Potentiometer (0-4095) will map to Relative Current (0-100%)
+// CAN manual 2.4 says scale is 10, so 100.0% = 1000
+#define REL_CURRENT_MIN           0
+#define REL_CURRENT_MAX           100 * 10
+
+// --- Safety Limits ---
+// Max AC Current = 15A. Scale 10 -> 150
+#define LIMIT_MAX_AC_CURRENT      15 * 10
+// Max Brake Current = 0A. Scale 10 -> 0
+#define LIMIT_MAX_BRAKE_CURRENT   0 * 10
+
+// --- Node ID ---
+// CORRECTED: Reverted to 0x1B (Decimal 27) from the specifications of DTI manual.
+#define NODE_ID 0x1B
+
+// --- Packet IDs (From DTI Manual V2.4) ---
+#define PACKET_ID_SET_REL_CURRENT   0x05  // Table 9, Page 17
+#define PACKET_ID_SET_MAX_AC        0x08  // Table 9, Page 17
+#define PACKET_ID_SET_MAX_BRAKE     0x09  // Table 9, Page 17
+#define PACKET_ID_DRIVE_ENABLE      0x0C  // Table 9, Page 17
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+#define R2D_HOLD_TIME_MS 2000U       // Time to hold the button pressed to enable drive (2 seconds)
+#define CAN_ID_R2D_REQUEST 0x030U    // ID for R2D request message
+#define CAN_ID_PDU_R2D_STATUS 0x031U // ID for R2D status message
+#define R2D_PDU_IDLE 0x00U           // R2D is idle, waiting for request
+#define R2D_PDU_REQUESTED 0x01U      // R2D request has been sent, waiting for response
+#define R2D_PDU_READY 0x05U          // R2D is ready, drive can be enabled
+#define R2D_PDU_ERROR 0xFFU          // R2D error state, drive cannot be enabled
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+/* These handles are defined in their respective .c files */
+extern ADC_HandleTypeDef hadc1;
+extern FDCAN_HandleTypeDef hfdcan1;
+
+/* USER CODE BEGIN PV */
+FDCAN_TxHeaderTypeDef TxHeader;           // CAN Tx header (same for all messages, only ID and data change)
+FDCAN_RxHeaderTypeDef RxHeader;           // CAN Rx header (used for receiving messages, to read ID and data length)
+uint8_t TxData[8];                        // Generic buffer for all CAN messages
+uint8_t RxData[8];                        // Buffer for receiving CAN messages
+uint8_t R2D_status = 0;                   // Variable to store R2D status (1 = Drive Enabled, 0 = Drive Disabled)
+uint16_t adc_value = 0;                   // Variable to store raw ADC value (0-4095)
+uint16_t APPS1 = 0;                       // Variable to store mapped APPS1 value (0-1000, representing 0-100.0% Relative Current)
+uint16_t APPS2 = 0;                       // Variable to store mapped APPS2 value (0-1000, representing 0-100.0% Relative Current)
+float differential = 0.0f;                // Variable to store the difference between APPS1 and APPS2 for plausibility check
+uint16_t target_brake_current = 0;        // Variable to store the target brake current (0-150, representing 0-15.0A) read from the potentiometer
+uint16_t target_rel_current = 0;          // Variable to store the target relative current (0-1000, representing 0-100.0%) that will be sent to the motor controller after mapping from the potentiometer
+GPIO_PinState button_prev = GPIO_PIN_SET; // Variable to store previous button state for edge detection (assuming active low button)
+
+/* USER CODE END PV */
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+/* USER CODE BEGIN PFP */
+void Send_CAN_Message(uint32_t id, uint8_t *data, uint32_t len);
+long map(long x, long in_min, long in_max, long out_min, long out_max);
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+
+long map(long x, long in_min, long in_max, long out_min, long out_max)
+{
+  if (in_max == in_min)
+    return out_min;
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+/* USER CODE END 0 */
+
+/**
+ * @brief  The application entry point.
+ * @retval int
+ */
+int main(void)
+{
+  /* USER CODE BEGIN 1 */
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+  HAL_Init();
+  /* USER CODE BEGIN Init */
+  /* USER CODE END Init */
+
+  SystemClock_Config();
+  /* USER CODE BEGIN SysInit */
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_FDCAN1_Init();
+  MX_ADC1_Init();
+  /* USER CODE BEGIN 2 */
+
+  // Start FDCAN
+  if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK)
+    Error_Handler();
+
+  // Activate FDCAN RX FIFO 0 New Message Interrupt
+  if (HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, FDCAN_RX_FIFO0) != HAL_OK)
+    Error_Handler();
+
+  // Calibrate ADC
+  if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK)
+    Error_Handler();
+
+  // Configure Global CAN Header for Extended ID
+  TxHeader.IdType = FDCAN_EXTENDED_ID;
+  TxHeader.TxFrameType = FDCAN_DATA_FRAME;
+  TxHeader.DataLength = FDCAN_DLC_BYTES_8;
+  TxHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+  TxHeader.BitRateSwitch = FDCAN_BRS_OFF;
+  TxHeader.FDFormat = FDCAN_CLASSIC_CAN;
+  TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+  TxHeader.MessageMarker = 0;
+
+  // --- SEND SAFETY LIMITS (ONCE AT STARTUP) ---
+
+  // 1. Set Max AC Current to 15A (Value: 150)
+  memset(TxData, 0, 8);
+  TxData[0] = (LIMIT_MAX_AC_CURRENT >> 8) & 0xFF; // MSB
+  TxData[1] = LIMIT_MAX_AC_CURRENT & 0xFF;        // LSB
+  uint32_t limit_ac_id = (PACKET_ID_SET_MAX_AC << 8) | NODE_ID;
+  Send_CAN_Message(limit_ac_id, TxData, 8);
+  HAL_Delay(10); // Small delay to ensure processing
+
+  // 2. Set Max Brake Current to 0A (Value: 0)
+  memset(TxData, 0, 8);
+  TxData[0] = (LIMIT_MAX_BRAKE_CURRENT >> 8) & 0xFF; // MSB
+  TxData[1] = LIMIT_MAX_BRAKE_CURRENT & 0xFF;        // LSB
+  uint32_t limit_brake_id = (PACKET_ID_SET_MAX_BRAKE << 8) | NODE_ID;
+  Send_CAN_Message(limit_brake_id, TxData, 8);
+  HAL_Delay(10);
+
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN 3 */
+  while (1)
+  {
+    // --- LED 5 ON ---
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+    // --- 1. Read Potentiometer (Robust Polling) ---
+    HAL_ADC_Start(&hadc1);
+    if (HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK)
+    {
+      adc_value = HAL_ADC_GetValue(&hadc1);                // HAL_ADC_GetValue returns a digital value from 0 to 4095 corresponding to the potentiometer position (0-3.3V)
+      APPS1 = map(adc_value, 0, 3723, 0, REL_CURRENT_MAX); // Map to 3723 due to Vmax is 3V not 3.3V to acomplish FS rules of APPS
+    }
+    if (HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK)
+    {
+      adc_value = HAL_ADC_GetValue(&hadc1);
+      APPS2 = map(adc_value, 0, 4095, 0, REL_CURRENT_MAX); // Map to 4095 resolución finita completa del SPAN
+    }
+    differential = abs((float)APPS1 - (float)APPS2);
+    // --- 2. Map ADC to Relative Current ---
+    // Maps (Pot) to 0-1000 (0-100.0% Current)
+    // Allow 0% so the motor can be stopped when pot is at minimum
+    target_rel_current = (APPS1 + APPS2) / 2; // Average of the two APPS channels that are already mapped to 0-100.0% (0-1000) to acomplish FS rules of APPS
+    // target_rel_current = map(adc_value, 0, 4095, 0, REL_CURRENT_MAX); --> orignal mapping with only ine channel
+
+    // --- 3. Send Drive Enable (Keep-Alive) ---
+    // ID: (0x0C << 8) | 0x1B = 0xC1B
+    memset(TxData, 0, 8);
+    TxData[0] = 0x01; // 1 = Drive Allowed
+    uint32_t drive_enable_id = (PACKET_ID_DRIVE_ENABLE << 8) | NODE_ID;
+    Send_CAN_Message(drive_enable_id, TxData, 8);
+
+    // --- 4. Send Set Relative Current Command ---
+    // ID: (0x05 << 8) | 0x1B = 0x51B
+    memset(TxData, 0, 8);
+    // Value is 2 bytes, Big Endian (Table 15)
+    TxData[0] = (target_rel_current >> 8) & 0xFF; // MSB
+    TxData[1] = target_rel_current & 0xFF;        // LSB
+
+    uint32_t set_rel_current_id = (PACKET_ID_SET_REL_CURRENT << 8) | NODE_ID;
+    Send_CAN_Message(set_rel_current_id, TxData, 8);
+
+    // --- 5. Wait ---
+    HAL_Delay(100);
+  }
+  /* USER CODE END 3 */
+}
+
+/**
+ * @brief System Clock Configuration
+ * @retval None
+ */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  /** Configure the main internal regulator output voltage
+   */
+  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);
+
+  /** Initializes the RCC Oscillators according to the specified parameters
+   * in the RCC_OscInitTypeDef structure.
+   */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV4;
+  RCC_OscInitStruct.PLL.PLLN = 85;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
+  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Initializes the CPU, AHB and APB buses clocks
+   */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/* USER CODE BEGIN 4 */
+
+void Send_CAN_Message(uint32_t id, uint8_t *data, uint32_t len)
+{
+  TxHeader.Identifier = id;
+  if (len == 0)
+    TxHeader.DataLength = FDCAN_DLC_BYTES_0;
+  else if (len == 1)
+    TxHeader.DataLength = FDCAN_DLC_BYTES_1;
+  else if (len == 2)
+    TxHeader.DataLength = FDCAN_DLC_BYTES_2;
+  else if (len == 3)
+    TxHeader.DataLength = FDCAN_DLC_BYTES_3;
+  else if (len == 4)
+    TxHeader.DataLength = FDCAN_DLC_BYTES_4;
+  else if (len == 5)
+    TxHeader.DataLength = FDCAN_DLC_BYTES_5;
+  else if (len == 6)
+    TxHeader.DataLength = FDCAN_DLC_BYTES_6;
+  else if (len == 7)
+    TxHeader.DataLength = FDCAN_DLC_BYTES_7;
+  else
+    TxHeader.DataLength = FDCAN_DLC_BYTES_8;
+
+  while (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) == 0)
+  {
+  }
+
+  if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, data) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
+{
+  (void)hfdcan;
+  (void)RxFifo0ITs;
+
+  if (HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK)
+  {
+    // Procesado del mensaje recibido.
+    // Por ejemplo, puedes inspeccionar RxHeader.Identifier y RxData[]
+  }
+}
+
+void Error_Handler(void)
+{
+  __disable_irq();
+  while (1)
+  {
+    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+    HAL_Delay(200);
+  }
+}
+
+#ifdef USE_FULL_ASSERT
+void assert_failed(uint8_t *file, uint32_t line)
+{
+}
+#endif /* USE_FULL_ASSERT */
+       /* USER CODE END 4 */

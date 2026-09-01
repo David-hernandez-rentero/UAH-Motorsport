@@ -1,0 +1,38 @@
+{
+    "configurations": [
+        {
+            "name": "STM32G474-VCU",
+            "compilerPath": "arm-none-eabi-gcc",
+            "cStandard": "c11",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "gcc-arm",
+            "compilerArgs": [
+                "-DSTM32G474xx",
+                "-DUSE_HAL_DRIVER",
+                "-DUSE_NUCLEO_64",
+                "-DDEBUG"
+            ],
+            "includePath": [
+                "${workspaceFolder}",
+                "${workspaceFolder}/Core/Inc",
+                "C:/Users/david/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.3/Drivers/STM32G4xx_HAL_Driver/Inc",
+                "C:/Users/david/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.3/Drivers/STM32G4xx_HAL_Driver/Inc/Legacy",
+                "C:/Users/david/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.3/Drivers/BSP/STM32G4xx_Nucleo",
+                "C:/Users/david/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.3/Drivers/CMSIS/Device/ST/STM32G4xx/Include",
+                "C:/Users/david/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.3/Drivers/CMSIS/Include"
+            ],
+            "browse": {
+                "path": [
+                    "${workspaceFolder}",
+                    "${workspaceFolder}/Core/Inc",
+                    "C:/Users/david/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.3/Drivers/STM32G4xx_HAL_Driver/Inc",
+                    "C:/Users/david/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.3/Drivers/STM32G4xx_HAL_Driver/Inc/Legacy",
+                    "C:/Users/david/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.3/Drivers/BSP/STM32G4xx_Nucleo",
+                    "C:/Users/david/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.3/Drivers/CMSIS/Device/ST/STM32G4xx/Include",
+                    "C:/Users/david/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.3/Drivers/CMSIS/Include"
+                ]
+            }
+        }
+    ],
+    "version": 4
+}
