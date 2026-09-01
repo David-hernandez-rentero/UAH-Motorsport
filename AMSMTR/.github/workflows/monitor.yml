@@ -1,0 +1,80 @@
+name: Build Rust monitor
+
+on:
+  push:
+    paths:
+      - Monitor/**
+      - .github/workflows/monitor.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+concurrency:
+  group: monitor-latest-release
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install musl tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        shell: bash
+        working-directory: Monitor/
+        env:
+          EXE: ${{ runner.os == 'Windows' && '.exe' || '' }}
+          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
+        run: |
+          cargo build --release --target ${{ matrix.target }}
+          mkdir -p bin/
+          cp target/${{ matrix.target }}/release/BMS-Monitor$EXE bin/BMS-Monitor-${{ matrix.name }}$EXE
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.name }}
+          path: Monitor/bin/*
+          retention-days: 1
+
+  release:
+    name: Update latest release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view latest >/dev/null 2>&1; then
+            gh release upload latest release/* --clobber
+            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/latest" -f sha="$GITHUB_SHA" -F force=true
+          else
+            gh release create latest \
+              release/* \
+              --title Latest \
+              --target $GITHUB_SHA
+          fi

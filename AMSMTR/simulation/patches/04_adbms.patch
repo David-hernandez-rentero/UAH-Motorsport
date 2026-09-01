@@ -1,0 +1,12 @@
+--- a/simulation/nucleo_g474re.repl
++++ b/simulation/nucleo_g474re.repl
+@@ -139,6 +139,9 @@ lpuart1: UART.STM32F7_USART @ sysbus 0x40008000
+ spi1: SPI.STM32SPIPacking @ sysbus 0x40013000
+     IRQ->nvic0@35
+ 
++adbms6830b: Miscellaneous.ADBMS6830B @ spi1
++    daisies: 7
++
+ usart1: UART.STM32F7_USART @ sysbus 0x40013800
+     frequency: 200000000
+     IRQ->nvic0@37

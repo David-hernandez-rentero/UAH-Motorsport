@@ -1,0 +1,18 @@
+--- a/simulation/nucleo_g474re.repl
++++ b/simulation/nucleo_g474re.repl
+@@ -146,6 +146,15 @@ usart1: UART.STM32F7_USART @ sysbus 0x40013800
+     frequency: 200000000
+     IRQ->nvic0@37
+ 
++fdcan1: CAN.STM32_FDCAN @ sysbus <0x40006400, +0x400>
++    series: STM32Series.L5
++    messageRam: fdcanRAM
++    Int0 -> nvic0@21
++    Int1 -> nvic0@22
++
++fdcanRAM: Memory.ArrayMemory @ sysbus 0x4000A400
++    size: 0x400
++
+ rcc: Miscellaneous.STM32G4_RCC @ sysbus 0x40021000
+     size: 0x400
+ 

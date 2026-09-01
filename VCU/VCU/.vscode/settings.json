@@ -1,0 +1,10 @@
+{
+    "stm32-for-vscode.makePath": false,
+    "editor.renderLineHighlight": "all",
+
+    "workbench.colorCustomizations": {
+        "editor.lineHighlightBackground": "#FFD70045",
+        "editor.lineHighlightBorder": "#FFD700AA",
+        "editorLineNumber.activeForeground": "#FFD700"
+    }
+}

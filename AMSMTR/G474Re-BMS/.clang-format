@@ -1,0 +1,9 @@
+QualifierAlignment: Right
+ReferenceAlignment: Pointer
+PointerAlignment: Right
+LineEnding: LF
+UseTab: Never
+TabWidth: 2
+IndentWidth: 2
+AlignTrailingComments: true
+IncludeBlocks: Regroup

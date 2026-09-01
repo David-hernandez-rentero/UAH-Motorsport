@@ -1,0 +1,351 @@
+/* USER CODE BEGIN Header */
+/**
+ ******************************************************************************
+ * @file    adc.c
+ * @brief   This file provides code for the configuration
+ *          of the ADC instances.
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (c) 2026 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "adc.h"                                                         // ADC peripheral declarations and HAL definitions
+
+/* USER CODE BEGIN 0 */
+
+/* USER CODE END 0 */
+
+ADC_HandleTypeDef hadc1;                                                 // Global HAL handle for ADC1, used to read APPS1 and APPS2
+ADC_HandleTypeDef hadc2;                                                 // Global HAL handle for ADC2, used to read BRAKE1 and BRAKE2
+
+/* ADC1 init function */
+
+#pragma region init ADC1                                        
+
+void MX_ADC1_Init(void)                                                  // Configures ADC1 and its two regular conversion channels
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_MultiModeTypeDef multimode = {0};                                  // Initializes the ADC multimode configuration structure to zero
+  ADC_ChannelConfTypeDef sConfig = {0};                                  // Initializes the ADC channel configuration structure to zero
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Common config
+   */
+  hadc1.Instance = ADC1;                                                 // Selects ADC1 as the peripheral controlled by hadc1
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;                  // Divides the peripheral clock by four to obtain the ADC kernel clock
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;                            // Uses 12-bit conversion resolution, producing values from 0 to 4095
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;                            // Right-aligns the conversion result in the ADC data register
+  hadc1.Init.GainCompensation = 0;                                       // Disables digital gain compensation
+  hadc1.Init.ScanConvMode = ADC_SCAN_ENABLE;                             // Enables scanning so ADC1 converts both APPS channels in rank order
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;                         // Signals end of conversion after each channel in the regular sequence
+  hadc1.Init.LowPowerAutoWait = DISABLE;                                 // Disables low-power auto-wait mode
+  hadc1.Init.ContinuousConvMode = DISABLE;                               // Stops after one two-channel sequence so software controls each acquisition
+  hadc1.Init.NbrOfConversion = 2;                                        // Defines two regular conversions: APPS1 and APPS2
+  hadc1.Init.DiscontinuousConvMode = DISABLE;                            // Keeps both ranks in one uninterrupted conversion sequence
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;                      // Starts ADC1 conversions from software
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;       // Disables external trigger edges
+  hadc1.Init.DMAContinuousRequests = DISABLE;                            // Disables continuous DMA requests because polling is used
+  hadc1.Init.Overrun = ADC_OVR_DATA_OVERWRITTEN;                         // Allows a new conversion result to overwrite unread data after an overrun
+  hadc1.Init.OversamplingMode = DISABLE;                                 // Disables hardware oversampling
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)                                    // Initializes ADC1 and checks whether the HAL configuration succeeded
+  {
+    Error_Handler();                                                     // Transfers execution to the global error handler after a failed HAL operation
+  }
+
+  /** Configure the ADC multi-mode
+   */
+  multimode.Mode = ADC_MODE_INDEPENDENT;                                 // Runs ADC1 independently rather than in dual-ADC multimode
+  if (HAL_ADCEx_MultiModeConfigChannel(&hadc1, &multimode) != HAL_OK)    // Applies the independent multimode configuration to ADC1
+  {
+    Error_Handler();                                                     // Transfers execution to the global error handler after a failed HAL operation
+  }
+
+  /** Configure Regular Channel 1: APPS1 -> ADC1_IN1 */
+  sConfig.Channel = ADC_CHANNEL_1;                                       // Selects ADC1 input channel 1 connected to APPS1
+  sConfig.Rank = ADC_REGULAR_RANK_1;                                     // Places the selected channel first in the regular conversion sequence
+  sConfig.SamplingTime = ADC_SAMPLETIME_47CYCLES_5;                      // Uses a 47.5-cycle sampling time for stable APPS measurements
+  sConfig.SingleDiff = ADC_SINGLE_ENDED;                                 // Configures the selected channel as a single-ended input
+  sConfig.OffsetNumber = ADC_OFFSET_NONE;                                // Disables the ADC hardware offset stage
+  sConfig.Offset = 0;                                                    // Sets the channel offset value to zero
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)                 // Applies the current channel and rank configuration to ADC1
+  {
+    Error_Handler();                                                     // Transfers execution to the global error handler after a failed HAL operation
+  }
+
+  /** Configure Regular Channel 2: APPS2 -> ADC1_IN2 */
+  sConfig.Channel = ADC_CHANNEL_2;                                       // Selects ADC1 input channel 2 connected to APPS2
+  sConfig.Rank = ADC_REGULAR_RANK_2;                                     // Places APPS2 second in the regular conversion sequence
+  sConfig.SamplingTime = ADC_SAMPLETIME_47CYCLES_5;                      // Uses a 47.5-cycle sampling time for stable APPS measurements
+  sConfig.SingleDiff = ADC_SINGLE_ENDED;                                 // Configures the selected channel as a single-ended input
+  sConfig.OffsetNumber = ADC_OFFSET_NONE;                                // Disables the ADC hardware offset stage
+  sConfig.Offset = 0;                                                    // Sets the channel offset value to zero
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)                 // Applies the current channel and rank configuration to ADC1
+  {
+    Error_Handler();                                                     // Transfers execution to the global error handler after a failed HAL operation
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+}
+
+#pragma endregion                                                       
+
+/* ADC2 init function */
+
+#pragma region init ADC2
+
+void MX_ADC2_Init(void)                                                  // Configures ADC2 and the two redundant brake-pedal analog inputs
+{
+
+  /* USER CODE BEGIN ADC2_Init 0 */
+
+  /* USER CODE END ADC2_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};                                  // Initializes the ADC channel configuration structure to zero
+
+  /* USER CODE BEGIN ADC2_Init 1 */
+
+  /* USER CODE END ADC2_Init 1 */
+
+  /** Common config
+   */
+  hadc2.Instance = ADC2;                                                 // Selects ADC2 as the peripheral controlled by hadc2
+  hadc2.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;                  // Divides the peripheral clock by four to obtain the ADC kernel clock
+  hadc2.Init.Resolution = ADC_RESOLUTION_12B;                            // Uses 12-bit conversion resolution, producing values from 0 to 4095
+  hadc2.Init.DataAlign = ADC_DATAALIGN_RIGHT;                            // Right-aligns the conversion result in the ADC data register
+  hadc2.Init.GainCompensation = 0;                                       // Disables digital gain compensation
+  hadc2.Init.ScanConvMode = ADC_SCAN_ENABLE;                             // Enables scan mode so ADC2 converts BRAKE1 and BRAKE2 in rank order
+  hadc2.Init.EOCSelection = ADC_EOC_SINGLE_CONV;                         // Signals end of conversion after each brake channel
+  hadc2.Init.LowPowerAutoWait = DISABLE;                                 // Disables low-power auto-wait mode
+  hadc2.Init.ContinuousConvMode = DISABLE;                               // Performs one two-channel brake sequence per software request
+  hadc2.Init.NbrOfConversion = 2;                                        // Defines two regular conversions: BRAKE1 and BRAKE2
+  hadc2.Init.DiscontinuousConvMode = DISABLE;                            // Disables discontinuous conversion mode
+  hadc2.Init.ExternalTrigConv = ADC_SOFTWARE_START;                      // Starts ADC2 conversions from software
+  hadc2.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;       // Disables external trigger edges
+  hadc2.Init.DMAContinuousRequests = DISABLE;                            // Disables continuous DMA requests because polling is used
+  hadc2.Init.Overrun = ADC_OVR_DATA_OVERWRITTEN;                         // Allows a new conversion result to overwrite unread data after an overrun
+  hadc2.Init.OversamplingMode = DISABLE;                                 // Disables hardware oversampling
+  if (HAL_ADC_Init(&hadc2) != HAL_OK)                                    // Initializes ADC2 and checks whether the HAL configuration succeeded
+  {
+    Error_Handler();                                                     // Transfers execution to the global error handler after a failed HAL operation
+  }
+
+  /** Configure Regular Channel 1: BRAKE1 -> PB2 -> ADC2_IN12
+   */
+  sConfig.Channel = ADC_CHANNEL_12;                                      // Selects ADC2 input channel 12 connected to BRAKE1 on PB2
+  sConfig.Rank = ADC_REGULAR_RANK_1;                                     // Places BRAKE1 first in the regular conversion sequence
+  sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;                     // Uses a long sampling time to improve stability of the brake reading
+  sConfig.SingleDiff = ADC_SINGLE_ENDED;                                 // Configures BRAKE1 as a single-ended input
+  sConfig.OffsetNumber = ADC_OFFSET_NONE;                                // Disables the ADC hardware offset stage
+  sConfig.Offset = 0;                                                    // Sets the channel offset value to zero
+  if (HAL_ADC_ConfigChannel(&hadc2, &sConfig) != HAL_OK)                 // Applies the BRAKE1 channel configuration to ADC2
+  {
+    Error_Handler();                                                     // Transfers execution to the global error handler after a failed HAL operation
+  }
+
+  /** Configure Regular Channel 2: BRAKE2 -> PA4 -> ADC2_IN17
+   */
+  sConfig.Channel = ADC_CHANNEL_17;                                      // Selects ADC2 input channel 17 connected to BRAKE2 on PA4
+  sConfig.Rank = ADC_REGULAR_RANK_2;                                     // Places BRAKE2 second in the regular conversion sequence
+  sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;                     // Uses the same long sampling time for the redundant brake channel
+  sConfig.SingleDiff = ADC_SINGLE_ENDED;                                 // Configures BRAKE2 as a single-ended input
+  sConfig.OffsetNumber = ADC_OFFSET_NONE;                                // Disables the ADC hardware offset stage
+  sConfig.Offset = 0;                                                    // Sets the channel offset value to zero
+  if (HAL_ADC_ConfigChannel(&hadc2, &sConfig) != HAL_OK)                 // Applies the BRAKE2 channel configuration to ADC2
+  {
+    Error_Handler();                                                     // Transfers execution to the global error handler after a failed HAL operation
+  }
+  /* USER CODE BEGIN ADC2_Init 2 */
+
+  /* USER CODE END ADC2_Init 2 */
+}
+
+#pragma endregion                                                    
+    
+static uint32_t HAL_RCC_ADC12_CLK_ENABLED = 0;                           // Reference counter used because ADC1 and ADC2 share the ADC12 peripheral clock
+
+#pragma region ADC MspInit
+
+void HAL_ADC_MspInit(ADC_HandleTypeDef *adcHandle)                       // Configures clocks, GPIO pins and interrupts required by an ADC instance
+{
+
+  GPIO_InitTypeDef GPIO_InitStruct = {0};                                // Initializes the GPIO configuration structure to zero
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};                          // Initializes the peripheral clock configuration structure to zero
+  if (adcHandle->Instance == ADC1)                                       // Applies the following low-level configuration only to ADC1
+  {
+    /* USER CODE BEGIN ADC1_MspInit 0 */
+
+    /* USER CODE END ADC1_MspInit 0 */
+
+    /** Initializes the peripherals clocks
+     */
+    PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC12;            // Selects the shared ADC12 peripheral clock for configuration
+    PeriphClkInit.Adc12ClockSelection = RCC_ADC12CLKSOURCE_SYSCLK;       // Uses SYSCLK as the ADC12 kernel clock source
+    if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)             // Applies the ADC clock-source configuration and checks for errors
+    {
+      Error_Handler();                                                   // Transfers execution to the global error handler after a failed HAL operation
+    }
+
+    /* ADC1 clock enable */
+    HAL_RCC_ADC12_CLK_ENABLED++;                                         // Increments the number of active users of the shared ADC12 clock
+    if (HAL_RCC_ADC12_CLK_ENABLED == 1)                                  // Enables the shared clock only for the first active ADC instance
+    {
+      __HAL_RCC_ADC12_CLK_ENABLE();                                      // Enables the hardware clock supplied to ADC1 and ADC2
+    }
+
+    __HAL_RCC_GPIOA_CLK_ENABLE();                                        // Enables GPIOA because PA0 and PA1 are used by ADC1
+    /**ADC1 GPIO Configuration
+    PA0     ------> ADC1_IN1
+    PA1     ------> ADC1_IN2
+    */
+    GPIO_InitStruct.Pin = APPS_1_Pin | APPS_2_Pin;                       // Selects the APPS1 and APPS2 analog input pins
+    GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;                             // Places the selected GPIO pins in analog mode
+    GPIO_InitStruct.Pull = GPIO_NOPULL;                                  // Disables internal pull-up and pull-down resistors on analog inputs
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);                              // Applies the analog configuration to PA0 and PA1
+
+    /* ADC1 interrupt Init */
+    HAL_NVIC_SetPriority(ADC1_2_IRQn, 0, 0);                             // Sets the shared ADC1/ADC2 interrupt to the highest configured priority
+    HAL_NVIC_EnableIRQ(ADC1_2_IRQn);                                     // Enables the shared ADC1/ADC2 interrupt in the NVIC
+    /* USER CODE BEGIN ADC1_MspInit 1 */
+
+    /* USER CODE END ADC1_MspInit 1 */
+  }
+  else if (adcHandle->Instance == ADC2)                                  // Applies the following low-level configuration only to ADC2
+  {
+    /* USER CODE BEGIN ADC2_MspInit 0 */
+
+    /* USER CODE END ADC2_MspInit 0 */
+
+    /** Initializes the peripherals clocks
+     */
+    PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC12;            // Selects the shared ADC12 peripheral clock for configuration
+    PeriphClkInit.Adc12ClockSelection = RCC_ADC12CLKSOURCE_SYSCLK;       // Uses SYSCLK as the ADC12 kernel clock source
+    if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)             // Applies the ADC clock-source configuration and checks for errors
+    {
+      Error_Handler();                                                   // Transfers execution to the global error handler after a failed HAL operation
+    }
+
+    /* ADC2 clock enable */
+    HAL_RCC_ADC12_CLK_ENABLED++;                                         // Increments the number of active users of the shared ADC12 clock
+    if (HAL_RCC_ADC12_CLK_ENABLED == 1)                                  // Enables the shared clock only for the first active ADC instance
+    {
+      __HAL_RCC_ADC12_CLK_ENABLE();                                      // Enables the hardware clock supplied to ADC1 and ADC2
+    }
+
+    __HAL_RCC_GPIOA_CLK_ENABLE();                                        // Enables GPIOA because PA4 is used by ADC2_IN17 for BRAKE2
+    __HAL_RCC_GPIOB_CLK_ENABLE();                                        // Enables GPIOB because PB2 is used by ADC2_IN12 for BRAKE1
+    /**ADC2 GPIO Configuration
+    PB2     ------> ADC2_IN12  (BRAKE1)
+    PA4     ------> ADC2_IN17  (BRAKE2)
+    */
+    GPIO_InitStruct.Pin = FRENO_Pin;                                     // Selects PB2, corresponding to BRAKE1
+    GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;                             // Places PB2 in analog mode
+    GPIO_InitStruct.Pull = GPIO_NOPULL;                                  // Disables internal pull-up and pull-down resistors
+    HAL_GPIO_Init(FRENO_GPIO_Port, &GPIO_InitStruct);                    // Applies the analog configuration to BRAKE1 on PB2
+
+    GPIO_InitStruct.Pin = GPIO_PIN_4;                                    // Selects PA4, corresponding to BRAKE2 / ADC2_IN17
+    GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;                             // Places PA4 in analog mode
+    GPIO_InitStruct.Pull = GPIO_NOPULL;                                  // Disables internal pull-up and pull-down resistors
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);                              // Applies the analog configuration to BRAKE2 on PA4
+
+    /* ADC2 interrupt Init */
+    HAL_NVIC_SetPriority(ADC1_2_IRQn, 0, 0);                             // Sets the shared ADC1/ADC2 interrupt to the highest configured priority
+    HAL_NVIC_EnableIRQ(ADC1_2_IRQn);                                     // Enables the shared ADC1/ADC2 interrupt in the NVIC
+    /* USER CODE BEGIN ADC2_MspInit 1 */
+
+    /* USER CODE END ADC2_MspInit 1 */
+  }
+}
+
+#pragma endregion
+#pragma region ADC MspDeInit
+
+void HAL_ADC_MspDeInit(ADC_HandleTypeDef *adcHandle)                     // Releases clocks, GPIO pins and interrupts associated with an ADC instance
+{
+
+  if (adcHandle->Instance == ADC1)                                       // Applies the following low-level configuration only to ADC1
+  {
+    /* USER CODE BEGIN ADC1_MspDeInit 0 */
+
+    /* USER CODE END ADC1_MspDeInit 0 */
+    /* Peripheral clock disable */
+    HAL_RCC_ADC12_CLK_ENABLED--;                                         // Decrements the number of active users of the shared ADC12 clock
+    if (HAL_RCC_ADC12_CLK_ENABLED == 0)                                  // Disables the shared clock when neither ADC instance is using it
+    {
+      __HAL_RCC_ADC12_CLK_DISABLE();                                     // Disables the hardware clock supplied to ADC1 and ADC2
+    }
+
+    /**ADC1 GPIO Configuration
+    PA0     ------> ADC1_IN1
+    PA1     ------> ADC1_IN2
+    */
+    HAL_GPIO_DeInit(GPIOA, APPS_1_Pin | APPS_2_Pin);                     // Returns the APPS input pins to their reset configuration
+
+    /* ADC1 interrupt Deinit */
+    /* USER CODE BEGIN ADC1:ADC1_2_IRQn disable */
+    /**
+     * Uncomment the line below to disable the "ADC1_2_IRQn" interrupt
+     * Be aware, disabling shared interrupt may affect other IPs
+     */
+    /* HAL_NVIC_DisableIRQ(ADC1_2_IRQn); */
+    /* USER CODE END ADC1:ADC1_2_IRQn disable */
+
+    /* USER CODE BEGIN ADC1_MspDeInit 1 */
+
+    /* USER CODE END ADC1_MspDeInit 1 */
+  }
+  else if (adcHandle->Instance == ADC2)                                  // Applies the following low-level configuration only to ADC2
+  {
+    /* USER CODE BEGIN ADC2_MspDeInit 0 */
+
+    /* USER CODE END ADC2_MspDeInit 0 */
+    /* Peripheral clock disable */
+    HAL_RCC_ADC12_CLK_ENABLED--;                                         // Decrements the number of active users of the shared ADC12 clock
+    if (HAL_RCC_ADC12_CLK_ENABLED == 0)                                  // Disables the shared clock when neither ADC instance is using it
+    {
+      __HAL_RCC_ADC12_CLK_DISABLE();                                     // Disables the hardware clock supplied to ADC1 and ADC2
+    }
+
+    /**ADC2 GPIO Configuration
+    PB2     ------> ADC2_IN12  (BRAKE1)
+    PA4     ------> ADC2_IN17  (BRAKE2)
+    */
+    HAL_GPIO_DeInit(FRENO_GPIO_Port, FRENO_Pin);                         // Returns BRAKE1 on PB2 to its reset configuration
+    HAL_GPIO_DeInit(GPIOA, GPIO_PIN_4);                                  // Returns BRAKE2 on PA4 to its reset configuration
+
+    /* ADC2 interrupt Deinit */
+    /* USER CODE BEGIN ADC2:ADC1_2_IRQn disable */
+    /**
+     * Uncomment the line below to disable the "ADC1_2_IRQn" interrupt
+     * Be aware, disabling shared interrupt may affect other IPs
+     */
+    /* HAL_NVIC_DisableIRQ(ADC1_2_IRQn); */
+    /* USER CODE END ADC2:ADC1_2_IRQn disable */
+
+    /* USER CODE BEGIN ADC2_MspDeInit 1 */
+
+    /* USER CODE END ADC2_MspDeInit 1 */
+  }
+}
+
+#pragma end region
+
+/* USER CODE BEGIN 1 */
+
+/* USER CODE END 1 */

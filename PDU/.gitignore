@@ -1,0 +1,28 @@
+# --- Compilación y Binarios ---
+build/
+cmake-build-*/
+*.elf
+*.bin
+*.hex
+*.map
+*.lst
+*.obj
+*.o
+*.d
+
+# --- Archivos de IDE (CLion, VS Code, STM32CubeIDE) ---
+.idea/
+.vscode/
+.project
+.cproject
+.settings/
+*.launch
+
+# --- Archivos temporales de CubeMX ---
+mxproject
+*.bak
+/Backup/
+
+# --- Otros ---
+.DS_Store
+Thumbs.db

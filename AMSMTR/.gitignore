@@ -1,0 +1,8 @@
+#.idea
+.idea/
+.vscode/
+
+simulation/renode/
+simulation/*.elf
+simulation/*.repl
+simulation/*.log*

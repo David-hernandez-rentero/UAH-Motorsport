@@ -1,0 +1,15 @@
+Checks:
+  - "clang-diagnostic-*"
+  - "clang-analyzer-*"
+  - "modernize-*"
+  - "bugprone-*"
+  - "performance-*"
+  - "misc-unused-parameters"
+  - "misc-definitions-in-headers"
+  - "-clang-diagnostic-format"
+  - "-clang-analyzer-core.FixedAddressDereference,-performance-no-int-to-ptr"
+  - "-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling" # allow memcpy
+  - "-modernize-macro-to-enum"
+  - "-bugprone-reserved-identifier"
+  - "-clang-diagnostic-gnu-zero-variadic-macro-arguments"
+  - "-clang-diagnostic-invalid-utf8"

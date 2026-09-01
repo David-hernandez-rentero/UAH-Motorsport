@@ -1,0 +1,13 @@
+# See https://designer.antmicro.com/library/devices/nucleo_g474re?software=zephyr%7Cnucleo_g474re%7Chello_world
+# File modified form the hello world example
+
+using sysbus
+mach create "Nucleo_G474Re"
+
+include $ORIGIN/STM32G4_RCC.cs
+include $ORIGIN/STM32G4_SPI.cs
+include $ORIGIN/ADBMS6830B.cs
+machine LoadPlatformDescription $ORIGIN/nucleo_g474re.repl
+
+sysbus LoadELF $ORIGIN/G474Re-BMS.elf
+cpu0 VectorTableOffset `sysbus GetSymbolAddress "g_pfnVectors"`

@@ -1,0 +1,449 @@
+/* USER CODE BEGIN Header */
+/**
+ *****************************************************************************
+ * @file           : main.c
+ * @author         : David Hernández Rentero
+ * @project        : main
+ * @date           : 2026-07-30
+ * @editor         : Visual Studio Code
+ *
+ * @brief          : Main program body
+ * @brief          : Implements Relative Current Control (0-100%)
+ * @brief          : Sets Safety Limits: Max AC = 15A, Max Brake = 0A
+ * @brief          : Implements Plausibility Check between APPS1 and APPS2
+ * @brief          : Implements Drive Enable/Disable via Button Press
+ * @brief          : FIXED: Node ID reverted to 0x1B
+ ******************************************************************************
+ ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2026 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+ */
+/* USER CODE END Header */
+
+/* Includes ------------------------------------------------------------------*/
+
+#include "main.h"                                                                                                       // Main header file for the project
+#include "adc.h"                                                                                                        // Header file for ADC (Analog-to-Digital Converter) configuration
+#include "fdcan.h"                                                                                                      // Header file for FDCAN (Flexible Data-Rate Controller Area Network) configuration
+#include "gpio.h"                                                                                                       // Header file for GPIO (General-Purpose Input/Output) configuration
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+
+#include <string.h>                                                                                                     // For memset
+#include <stdbool.h>                                                                                                    // For boolean data type
+#include <math.h>                                                                                                       // For mathematical functions like abs()
+
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+
+/* --- Control Limits ---
+*  Potentiometer (0-4095) will map to Relative Current (0-100%)
+*  CAN manual 2.4 says scale is 10, so 100.0% = 1000*/
+
+#define REL_CURRENT_MIN           0                                                                                     // Minimum Relative Current (0%)
+#define REL_CURRENT_MAX           100 * 10                                                                              // Maximum Relative Current (100.0% scaled by 10)
+
+// --- Safety Limits ---
+// Max AC Current = 15A. Scale 10 -> 150
+
+#define LIMIT_MAX_AC_CURRENT      15 * 10                                                                               // Maximum AC Current Limit (15.0A scaled by 10)
+
+// Max Brake Current = 0A. Scale 10 -> 0
+
+#define LIMIT_MAX_BRAKE_CURRENT   0 * 10                                                                                // Maximum Brake Current Limit (0A scaled by 10)
+
+// --- Node ID ---
+// CORRECTED: Reverted to 0x1B (Decimal 27) from the specifications of DTI manual.
+
+#define NODE_ID 0x1B
+
+// --- Packet IDs (From DTI Manual V2.4) ---
+#define PACKET_ID_SET_REL_CURRENT   0x05                                                                                // Table 9, Page 17
+#define PACKET_ID_SET_MAX_AC        0x08                                                                                // Table 9, Page 17
+#define PACKET_ID_SET_MAX_BRAKE     0x09                                                                                // Table 9, Page 17
+#define PACKET_ID_DRIVE_ENABLE      0x0C                                                                                // Table 9, Page 17
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+#define R2D_HOLD_TIME_MS            2000U                                                                               // Time to hold the button pressed to enable drive (2 seconds)
+#define R2D_CHECK_PERIOD_MS         10U                                                                                 // Period to check the button state during the hold time (10 ms)
+#define Delay_10_MS()               HAL_Delay(10)                                                                       // Macro for a 10 ms delay
+#define Delay_100_MS()              HAL_Delay(100)                                                                      // Macro for a 100 ms delay
+#define CAN_ID_R2D                  0x0000301BU                                                                         // CAN ID for R2D activation message (Extended ID: 0x301B)
+#define R2D_ACTIVATION_BYTE         4U                                                                                  // Byte index in the CAN message where the activation bit is located (Byte 4, zero-indexed)
+#define R2D_ACTIVATION_MASK         0x10U                                                                               // Start bit 36, length 1
+
+/* Ajustar tras calibrar la señal analógica real del freno
+ * Hay que deifinir el umbral mínimo de activación de momento al 50%
+ * para ello hay que ajustar el valor de BRAKE_ACTIVE_THRESHOLD_ADC con 
+ * ensayos reales. */
+
+#define BRAKE_ACTIVE_THRESHOLD_ADC  2048U                                                                               // Threshold ADC value for brake activation (50% of 4095)
+
+/* ARRANQUE está configurado como entrada digital en PC6.
+ * Cambiar a GPIO_PIN_RESET si el pulsador es activo a 
+ * nivel bajo si cambiamos la config del pin. */
+
+#define ARRANQUE_ACTIVE_STATE       GPIO_PIN_SET                                                                        // Active state of the ARRANQUE button (GPIO_PIN_SET for active high, GPIO_PIN_RESET for active low)
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+/* hadc1, hadc2 and hfdcan1 are already declared in adc.h and fdcan.h. */
+
+/* USER CODE BEGIN PV */
+FDCAN_TxHeaderTypeDef TxHeader;                                                                                         // CAN Tx header (same for all messages, only ID and data change)
+FDCAN_RxHeaderTypeDef RxHeader;                                                                                         // CAN Rx header (used for receiving messages, to read ID and data length)
+uint8_t               TxData[8];                                                                                        // Generic buffer for all CAN messages
+uint8_t               RxData[8];                                                                                        // Buffer for receiving CAN messages
+uint8_t               R2D_status = 0;                                                                                   // Variable to store R2D status (1 = Drive Enabled, 0 = Drive Disabled)
+uint16_t              adc_value = 0;                                                                                    // Variable to store raw ADC value (0-4095)
+uint16_t              brake_adc_value = 0;                                                                              // Variable to store raw ADC value for brake (0-4095)
+uint16_t              APPS1 = 0;                                                                                        // Variable to store mapped APPS1 value (0-1000, representing 0-100.0% Relative Current)
+uint16_t              APPS2 = 0;                                                                                        // Variable to store mapped APPS2 value (0-1000, representing 0-100.0% Relative Current)
+float                 differential = 0.0f;                                                                              // Variable to store the difference between APPS1 and APPS2 for plausibility check
+uint16_t              target_brake_current = 0;                                                                         // Variable to store the target brake current (0-150, representing 0-15.0A) read from the potentiometer
+uint16_t              target_rel_current = 0;                                                                           // Variable to store the target relative current (0-1000, representing 0-100.0%) that will be sent to the motor controller after mapping from the potentiometer
+GPIO_PinState         button_prev = GPIO_PIN_SET;                                                                       // Variable to store previous button state for edge detection (as
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+/* USER CODE BEGIN PFP */
+
+void SystemClock_Config(void);                                                                                          // Function to configure the system clock
+void Error_Handler(void);                                                                                               // Function to handle errors (e.g., HAL failures)
+void Send_CAN_Message(uint32_t id, uint8_t *data, uint32_t len);                                                        // Function to send a CAN message with specified ID, data, and length
+void Wait_And_Send_R2D_Activation(void);                                                                                // Waits for the ARRANQUE button to be held for R2D_HOLD_TIME_MS and sends the R2D activation message
+void Send_R2D_Activation(void);                                                                                         // Sends the R2D activation message over CAN
+bool R2D_Inputs_Are_Active(uint16_t brake_adc);                                                                         // Checks if the R2D activation conditions are met (brake pressed and ARRANQUE button pressed)
+long map(long x, long in_min, long in_max, long out_min, long out_max);                                                 // Maps a value from one range to another (used for mapping ADC values to relative current)
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+
+/* We use the fuction map() to convert the ADC value (0-4095) to a relative 
+ * current value (0-1000) for the motor controller. This allows us to control
+ * the motor speed based on the potentiometer position.*/
+
+long map(long x, long in_min, long in_max, long out_min, long out_max)                                                  // Maps a value from one range to another (used for mapping ADC values to relative current)
+{
+  if (in_max == in_min)                                                                                                 // Prevent division by zero if the input range is zero
+    return out_min;                                                                                                     // Return the minimum output value if the input range is zero to avoid undefined behavior
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;                                              // Perform the mapping calculation and return the mapped value
+}
+
+/* USER CODE END 0 */
+
+/**
+ * @brief  The application entry point.
+ * @retval int
+ */
+int main(void)                                                                                                          // Main function: Entry point of the program
+{
+  /* USER CODE BEGIN 1 */
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+  HAL_Init();                                                                                                           // Initialize the Hardware Abstraction Layer (HAL) library
+  /* USER CODE BEGIN Init */
+  /* USER CODE END Init */
+
+  SystemClock_Config();                                                                                                 // Configure the system clock
+  /* USER CODE BEGIN SysInit */
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();                                                                                                       // Initialize GPIO pins
+  MX_FDCAN1_Init();                                                                                                     // Initialize FDCAN1 peripheral
+  MX_ADC1_Init();                                                                                                       // Initialize ADC1 peripheral
+  MX_ADC2_Init();                                                                                                       // Initialize ADC2 peripheral
+  /* USER CODE BEGIN 2 */
+
+  // Start FDCAN
+  if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK)                                                                              // If starting FDCAN fails, call the error handler
+    Error_Handler();
+
+  // Calibrate both ADC peripherals
+  if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK)                                                  // If ADC1 calibration fails, call the error handler
+    Error_Handler();
+
+  if (HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED) != HAL_OK)                                                  // If ADC2 calibration fails, call the error handler
+    Error_Handler();
+
+  // Configure Global CAN Header for Extended ID
+  TxHeader.IdType = FDCAN_EXTENDED_ID;                                                                                  // Set the CAN ID type to Extended ID
+  TxHeader.TxFrameType = FDCAN_DATA_FRAME;                                                                              // Set the CAN frame type to Data Frame
+  TxHeader.DataLength = FDCAN_DLC_BYTES_8;                                                                              // Set the CAN data length to 8 bytes
+  TxHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;                                                                      // Set the Error State Indicator to Active
+  TxHeader.BitRateSwitch = FDCAN_BRS_OFF;                                                                               // Disable Bit Rate Switching (BRS)
+  TxHeader.FDFormat = FDCAN_CLASSIC_CAN;                                                                                // Set the CAN format to Classic CAN
+  TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;                                                                     // Disable Tx Event FIFO
+  TxHeader.MessageMarker = 0;                                                                                           // Set the Message Marker to 0
+
+  // --- SEND SAFETY LIMITS (ONCE AT STARTUP) ---
+
+  // 1. Set Max AC Current to 15A (Value: 150)
+  memset(TxData, 0, 8);                                                                                                 // Clear the TxData buffer
+  TxData[0] = (LIMIT_MAX_AC_CURRENT >> 8) & 0xFF;                                                                       // MSB
+  TxData[1] = LIMIT_MAX_AC_CURRENT & 0xFF;                                                                              // LSB
+  uint32_t limit_ac_id = (PACKET_ID_SET_MAX_AC << 8)| NODE_ID;                                                          // Create the CAN ID for setting max AC current
+  Send_CAN_Message(limit_ac_id, TxData, 8);                                                                             // Send the CAN message to set max AC current
+  Delay_10_MS();                                                                                                        // Small delay to ensure processing
+
+  // 2. Set Max Brake Current to 0A (Value: 0)
+  memset(TxData, 0, 8);                                                                                                 // Clear the TxData buffer
+  TxData[0] = (LIMIT_MAX_BRAKE_CURRENT >> 8) & 0xFF;                                                                    // MSB
+  TxData[1] = LIMIT_MAX_BRAKE_CURRENT & 0xFF;                                                                           // LSB
+  uint32_t limit_brake_id = (PACKET_ID_SET_MAX_BRAKE << 8) | NODE_ID;                                                   // Create the CAN ID for setting max brake current
+  Send_CAN_Message(limit_brake_id, TxData, 8);                                                                          // Send the CAN message to set max brake current
+  Delay_10_MS();                                                                                                        // Small delay to ensure processing
+
+  /* Executed only first time to obtain the activation signal for R2D
+   * and allow PDU to start R2D sequence. */
+
+  Wait_And_Send_R2D_Activation();                                                                                       // Wait for the ARRANQUE button and brake pedal to be held for 2 seconds and send the R2D activation message
+
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN 3 */
+  while (1)
+  {
+    /* --- 1. Read Potentiometer and check the diference between both
+    * potentiometers --- */
+
+    HAL_ADC_Start(&hadc1);                                                                                              // Start ADC1 conversion
+    if (HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK)                                                               // Poll for ADC1 conversion completion with a timeout of 100 ms
+    {
+      adc_value = HAL_ADC_GetValue(&hadc1);                                                                             // HAL_ADC_GetValue returns a digital value from 0 to 4095 corresponding to the potentiometer position (0-3.3V)
+      APPS1 = map(adc_value, 0, 3723, 0, REL_CURRENT_MAX);                                                              // Map to 3723 due to Vmax is 3V not 3.3V to acomplish FS rules of APPS
+    }
+    if (HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK)
+    {
+      adc_value = HAL_ADC_GetValue(&hadc1);                                                                             // HAL_ADC_GetValue returns a digital value from 0 to 4095 corresponding to the potentiometer position (0-3.3V)
+      APPS2 = map(adc_value, 0, 4095, 0, REL_CURRENT_MAX);                                                              // Map to 4095 resolución finita completa del SPAN
+    }
+    differential = fabsf((float)APPS1 - (float)APPS2);
+
+    /* --- 2. Map ADC to Relative Current ---
+      * Maps (Pot) to 0-1000 (0-100.0% Current) the max is 1000
+      * because the scale is 10, so 100.0% = 1000. Allow 0% so 
+      * the motor can be stopped when pot is at minimum per EV rules.
+      * The motor controller will handle the 0% case and stop the motor.*/
+
+    target_rel_current = (APPS1 + APPS2) / 2;                                                                           // Average of the two APPS channels that are already mapped to 0-100.0% (0-1000) to acomplish FS rules of APPS
+
+    /* target_rel_current = map(adc_value, 0, 4095, 0, REL_CURRENT_MAX); -->
+    * original mapping with only one channel*/
+
+    /* --- 3. Send Drive Enable (Keep-Alive) ---
+     * ID: (0x0C << 8) | 0x1B = 0xC1B */
+
+    memset(TxData, 0, 8);                                                                                               // Clear the TxData buffer
+    TxData[0] = 0x01;                                                                                                   // 1 = Drive Allowed
+    uint32_t drive_enable_id = (PACKET_ID_DRIVE_ENABLE << 8) | NODE_ID;                                                 // Create the CAN ID for drive enable message
+    Send_CAN_Message(drive_enable_id, TxData, 8);                                                                       // Send the CAN message to enable drive
+
+    /* --- 4. Send Set Relative Current Command ---
+     * ID: (0x05 << 8) | 0x1B = 0x51B
+     * Value is 2 bytes, Big Endian (Table 15)*/
+    memset(TxData, 0, 8);                                                                                               // Clear the TxData buffer
+    TxData[0] = (target_rel_current >> 8) & 0xFF;                                                                       // MSB
+    TxData[1] = target_rel_current & 0xFF;                                                                              // LSB
+    uint32_t set_rel_current_id = (PACKET_ID_SET_REL_CURRENT << 8) | NODE_ID;                                           // Create the CAN ID for setting relative current
+    Send_CAN_Message(set_rel_current_id, TxData, 8);                                                                    // Send the CAN message to set relative current
+
+    /* --- 5. Wait ---
+     * Wait for 100 ms before the next loop iteration
+     */
+    Delay_100_MS();                                                                                                     // Wait for 100 ms before the next loop iteration
+  }
+  /* USER CODE END 3 */
+}
+
+/**
+ * @brief System Clock Configuration
+ * @retval None
+ */
+void SystemClock_Config(void)                                                                                           // Configures the system clock to use the HSI oscillator and PLL to achieve the desired system frequency
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};                                                                           // Structure to configure the RCC oscillators (HSI, PLL, etc.)
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};                                                                           // Structure to configure the CPU, AHB, and APB bus clocks
+
+  /** Configure the main internal regulator output voltage
+   */
+
+  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);                                                  // Set the voltage scaling to Scale 1 Boost mode for maximum performance
+
+  /** Initializes the RCC Oscillators according to the specified parameters
+   * in the RCC_OscInitTypeDef structure.
+   */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;                                                            // Use the High-Speed Internal (HSI) oscillator
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;                                                                              // Turn on the HSI oscillator
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;                                                   // Use the default calibration value for HSI
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;                                                                          // Turn on the Phase-Locked Loop (PLL)
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;                                                                  // Use HSI as the PLL source
+  RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV4;                                                                           // Set PLLM to divide by 4 (HSI is 16 MHz, so VCO input = 4 MHz)
+  RCC_OscInitStruct.PLL.PLLN = 85;                                                                                      // Set PLLN to multiply by 85 (VCO output = 4 MHz * 85 = 340 MHz)
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;                                                                           // Set PLLP to divide by 2 (PLL output = 340 MHz / 2 = 170 MHz)
+  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;                                                                           // Set PLLQ to divide by 2 (PLL output = 340 MHz / 2 = 170 MHz)
+  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;                                                                           // Set PLLR to divide by 2 (PLL output = 340 MHz / 2 = 170 MHz)
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)                                                                  // If oscillator configuration fails, call the error handler
+  {
+    Error_Handler();
+  }
+
+  /** Initializes the CPU, AHB and APB buses clocks
+   */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;  // Configure HCLK, SYSCLK, PCLK1, and PCLK2 clocks
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;                                                             // Use PLL output as the system clock source
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;                                                                    // Set AHB clock divider to 1 (HCLK = SYSCLK)
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;                                                                     // Set APB1 clock divider to 1 (PCLK1 = HCLK)
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;                                                                     // Set APB2 clock divider to 1 (PCLK2 = HCLK)
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)                                               // If clock configuration fails, call the error handler
+  {
+    Error_Handler();
+  }
+}
+
+/* USER CODE BEGIN 4 */
+
+void Send_R2D_Activation(void)                                                                                          // Sends the R2D activation message over CAN to enable the drive
+{
+  memset(TxData, 0, sizeof(TxData));                                                                                    // Clear the TxData buffer to ensure no residual data is sent
+
+  /* R2D_Active_Sequence_VCU: start bit 36, longitud 1 bit. */
+  TxData[R2D_ACTIVATION_BYTE] |= R2D_ACTIVATION_MASK;                                                                   // Set the activation bit in the appropriate byte of the CAN message to indicate drive enable
+
+  /* Se envían 8 bytes porque la señal se encuentra en el byte 4. */
+  Send_CAN_Message(CAN_ID_R2D, TxData, 8U);                                                                             // Send the R2D activation message with the specified CAN ID and 8 bytes of data
+}
+
+bool R2D_Inputs_Are_Active(uint16_t brake_adc)                                                                          // Checks if the R2D activation conditions are met (brake pressed and ARRANQUE button pressed)
+{
+  const bool start_button_pressed =                                                                                     // Check if the ARRANQUE button is pressed (active state) using HAL_GPIO_ReadPin
+      (HAL_GPIO_ReadPin(ARRANQUE_GPIO_Port, ARRANQUE_Pin) == ARRANQUE_ACTIVE_STATE);  
+
+  const bool brake_pressed =                                                                                            // Check if the brake pedal is pressed by comparing the ADC value to the defined threshold
+      (brake_adc >= BRAKE_ACTIVE_THRESHOLD_ADC);
+
+  return start_button_pressed && brake_pressed;                                                                         // Return true only if both the ARRANQUE button is pressed and the brake pedal is pressed
+}
+
+void Wait_And_Send_R2D_Activation(void)                                                                                 // Waits for the ARRANQUE button and brake pedal to be held for R2D_HOLD_TIME_MS and sends the R2D activation message
+{
+  uint32_t hold_start_tick = 0U;                                                                                        // Variable to store the tick count when the hold period starts initialized to 0
+  bool hold_timer_started = false;                                                                                      // Flag to indicate if the hold timer has started initialized to false
+
+  if (HAL_ADC_Start(&hadc2) != HAL_OK)                                                                                  // Start ADC2 conversion for brake pedal and check for errors
+    Error_Handler();
+
+  while (1)                                                                                                             // Infinite loop to continuously check the state of the ARRANQUE button and brake pedal
+  {
+    if (HAL_ADC_PollForConversion(&hadc2, 20U) == HAL_OK)                                                               // Poll for ADC2 conversion completion with a timeout of 20 ms to read the brake pedal position
+    {
+      brake_adc_value = (uint16_t)HAL_ADC_GetValue(&hadc2);                                                             // Read the ADC value for the brake pedal and store it in brake_adc_value
+
+      if (R2D_Inputs_Are_Active(brake_adc_value))                                                                       // Check if both the ARRANQUE button and brake pedal are active (pressed)
+      {
+        if (!hold_timer_started)                                                                                        // If the hold timer has not started yet, record the current tick count and set the flag to true
+        {
+          hold_start_tick = HAL_GetTick();                                                                              // Record the current tick count when the hold period starts
+          hold_timer_started = true;                                                                                    // Set the flag to indicate that the hold timer has started
+        }
+        else if ((uint32_t)(HAL_GetTick() - hold_start_tick) >= R2D_HOLD_TIME_MS)                                       // If the hold timer has started, check if the required hold time has elapsed
+        {
+          Send_R2D_Activation();                                                                                        // Send the R2D activation message over CAN to enable the drive
+          HAL_ADC_Stop(&hadc2);                                                                                         // Stop ADC2 conversion to save power and resources since we no longer need to read the brake pedal
+          return;                                                                                                       // Exit the function after sending the activation message to avoid sending it multiple times
+        }
+      }
+      else
+      {
+        /* Si se suelta uno de los dos, el conteo vuelve a empezar. */
+        hold_timer_started = false;                                                                                     // Reset the hold timer flag if either the ARRANQUE button or brake pedal is released, so the user must hold both again for the full duration
+      }
+    }
+    /* Si no se puede leer el ADC, se reinicia el conteo para evitar 
+     * activaciones accidentales.*/
+
+    else
+    {
+      hold_timer_started = false;                                                                                       // Reset the hold timer flag if ADC reading fails, to prevent accidental activation due to a read error
+    }
+
+    HAL_Delay(R2D_CHECK_PERIOD_MS);                                                                                     // Delay for a short period (10 ms) before checking the button and brake pedal state again to avoid busy-waiting and reduce CPU usage
+  }
+}
+
+void Send_CAN_Message(uint32_t id, uint8_t *data, uint32_t len)                                                         // Sends a CAN message with the specified ID, data, and length
+{
+  TxHeader.Identifier = id;                                                                                             // Set the CAN ID for the message to be sent
+  if (len == 0)                                                                                                         // If the length is 0, set the Data Length Code (DLC) to 0 bytes
+    TxHeader.DataLength = FDCAN_DLC_BYTES_0;                                                                            // Set the Data Length Code (DLC) with a macro to 0 bytes
+  else if (len == 1)                                                                                                    // If the length is 1, set the Data Length Code (DLC) to 1 byte
+    TxHeader.DataLength = FDCAN_DLC_BYTES_1;                                                                            // Set the Data Length Code (DLC) with a macro to 1 byte
+  else if (len == 2)                                                                                                    // If the length is 2, set the Data Length Code (DLC) to 2 bytes
+    TxHeader.DataLength = FDCAN_DLC_BYTES_2;                                                                            // Set the Data Length Code (DLC) with a macro to 2 bytes
+  else if (len == 3)                                                                                                    // If the length is 3, set the Data Length Code (DLC) to 3 bytes
+    TxHeader.DataLength = FDCAN_DLC_BYTES_3;                                                                            // Set the Data Length Code (DLC) with a macro to 3 bytes
+  else if (len == 4)                                                                                                    // If the length is 4, set the Data Length Code (DLC) to 4 bytes
+    TxHeader.DataLength = FDCAN_DLC_BYTES_4;                                                                            // Set the Data Length Code (DLC) with a macro to 4 bytes
+  else if (len == 5)                                                                                                    // If the length is 5, set the Data Length Code (DLC) to 5 bytes
+    TxHeader.DataLength = FDCAN_DLC_BYTES_5;                                                                            // Set the Data Length Code (DLC) with a macro to 5 bytes
+  else if (len == 6)                                                                                                    // If the length is 6, set the Data Length Code (DLC) to 6 bytes
+    TxHeader.DataLength = FDCAN_DLC_BYTES_6;                                                                            // Set the Data Length Code (DLC) with a macro to 6 bytes
+  else if (len == 7)                                                                                                    // If the length is 7, set the Data Length Code (DLC) to 7 bytes
+    TxHeader.DataLength = FDCAN_DLC_BYTES_7;                                                                            // Set the Data Length Code (DLC) with a macro to 7 bytes
+  else                                                                                                                  // If the length is 8 or more, set the Data Length Code (DLC) to 8 bytes (maximum allowed)
+    TxHeader.DataLength = FDCAN_DLC_BYTES_8;                                                                            // Set the Data Length Code (DLC) with a macro to 8 bytes
+
+  while (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) == 0)                                                                   // Wait until there is space in the Tx FIFO to send the message
+  {
+  }
+
+  if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, data) != HAL_OK)                                               // If adding the message to the Tx FIFO fails, call the error handler
+  {
+    Error_Handler();                                                                                                    // Call the error handler to indicate a failure in sending the CAN message
+  }
+}
+
+void Error_Handler(void)                                                                                                // Function to handle errors (e.g., HAL failures)
+{
+  __disable_irq();                                                                                                      // Disable interrupts to prevent further execution of code that may be in an unstable state
+  while (1)                                                                                                             // Infinite loop to indicate an error has occurred; the system is halted here for debugging purposes
+  {
+    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);                                                                              // Toggle the onboard LED (PA5) to indicate an error state visually
+    HAL_Delay(200);                                                                                                     // Delay for 200 ms to create a visible blinking effect of the LED, signaling that the system is in an error state
+  }
+}
+
+#ifdef USE_FULL_ASSERT                                                                                                  // If full assert is enabled, this function is called when an assertion fails
+void assert_failed(uint8_t *file, uint32_t line)                                                                        // Reports the name of the source file and the line number where the assertion failed
+{
+}
+#endif /* USE_FULL_ASSERT */                                            
+       /* USER CODE END 4 */

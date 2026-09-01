@@ -1,0 +1,102 @@
+\documentclass[border=0.5cm]{standalone}
+
+\usepackage{hyperref}
+\hypersetup{
+    pdftitle=BMS Temperature MUX,
+    pdfauthor={@hgluah (GitHub - UAH Motorsport)},
+    pdfcreator=,
+}
+\usepackage{ifluatex}
+\ifluatex
+\pdfvariable suppressoptionalinfo 1023
+\else
+\errmessage{Compile this LaTeX file with lualatex to make it reproducible}
+\fi
+
+\usepackage[american]{circuitikz}
+
+\begin{document}
+\begin{circuitikz}
+
+\pgfmathsetmacro{\DataPins}{8} % Amount of data pins (i.e. channel count)
+\pgfmathsetmacro{\SelectionPins}{ceil(log2(\DataPins))} % Amount of selection pins
+
+\let\var\pgfmathsetlengthmacro
+
+\var{\HW}{1.5cm} % MUX's half-width
+\var{\HH}{5cm} % MUX's half-height (the big/left side)
+\var{\HHS}{3cm} % MUX's half-height (the small/right side)
+\var{\RL}{1.5cm} % Resistors'/Capacitors' length
+\var{\GL}{\RL*2/3} % Grounds' length
+\var{\PT}{0.1cm} % Points' radius
+\var{\YTF}{\HH-\RL} % Y coord of T_First aka T1
+\var{\YTL}{-\HH+\RL} % Y coord of T_Last aka T\DataPins
+
+\tikzset{ground/.style={shape=ground, /tikz/circuitikz/bipoles/length=\dimexpr\GL*2\relax}}
+
+% MUX trapezoid
+{
+    \draw (-\HW, \HH)
+        -- (\HW, \HHS)
+        -- (\HW, -\HHS)
+        -- (-\HW, -\HH)
+        -- cycle;
+    \node at (0, 0) {\Large \DataPins:1 MUX};
+}
+
+% MUX input pins
+{
+    \newcommand{\Temperature}[2] {
+        \draw (-\HW, #2) -- ++(-\RL, 0) coordinate (point)
+            node[circle, fill, inner sep=0, minimum size=\PT*2] {}
+            node[above right] {\Large T#1}
+
+            to[sR, l=$R_{\mathrm{ntc#1}}$, mirror] ++(0, -\RL)
+            node[ground] {}
+
+            (point) to[R, l_=$R_{p#1}$] ++(-\RL, 0);
+    }
+
+    % Temperature readings
+    \Temperature{1}{\YTF}
+    \Temperature{\DataPins}{\YTL}
+
+    % Ellipses
+    \foreach \i in {1, ..., \numexpr\DataPins-2\relax} {
+        \var{\dy}{(\YTF-\YTL -2*\RL -2*\GL)/(\DataPins-1)}
+        \var{\y}{(\i-(\DataPins-1)/2)*\dy}
+        \draw (-\HW, \y) coordinate (mux)
+            -- ++(-\RL*2/3, 0)
+            (mux) ++ (-\RL, 0) node {$\cdots$};
+    }
+
+    % VREF2 line
+    \draw (-\HW-2*\RL, \HH) node[below left] {\Large VREF2}
+        [line width=\PT] -- ++(0, -2*\HH);
+}
+
+% MUX output pin
+{
+    \draw (\HW, 0) -- ++(\RL, 0)
+        to[R, l=$R_a$] ++(\RL, 0) coordinate (point)
+        node[circle, fill, inner sep=0, minimum size=\PT*2] {}
+
+        -- ++(\RL, 0) node[right] {\Large\pgfmathparse{int(\SelectionPins)} GPIO\_\char\numexpr`A+\pgfmathresult\relax}
+
+        (point) to[C, l=$C_\mathrm{LOAD}$] ++(0, -\RL)
+        node[ground] {};
+}
+
+% MUX selection pins
+{
+    \foreach \i in {1, ..., \SelectionPins} {
+        \var{\Offset}{\i/(\SelectionPins+1)}
+        \var{\X}{-\HW + 2*\HW*\Offset}
+        \var{\Y}{-\HH + (\HH-\HHS)*\Offset}
+        \draw (\X, \Y) --
+            (\X, -\HH) node[below right, rotate=-45] {\Large GPIO\_\char\numexpr`A+\i-1\relax};
+    }
+}
+
+\end{circuitikz}
+\end{document}

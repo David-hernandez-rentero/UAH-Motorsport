@@ -1,0 +1,28 @@
+{
+    "configurations": [
+        {
+            "name": "Win32",
+            "compilerPath": "C:/msys64/mingw64/bin/arm-none-eabi-gcc.exe",
+            "intelliSenseMode": "windows-gcc-arm",
+            "compileCommands": "${workspaceFolder}/VCU/build/Debug/compile_commands.json",
+            "includePath": [
+                "${workspaceFolder}/VCU/Core/Inc",
+                "${workspaceFolder}/VCU/Core/Src",
+                "${workspaceFolder}/VCU/**",
+                "C:/Users/david/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.3/Drivers/STM32G4xx_HAL_Driver/Inc",
+                "C:/Users/david/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.3/Drivers/CMSIS/Device/ST/STM32G4xx/Include",
+                "C:/Users/david/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.3/Drivers/CMSIS/Include",
+                "C:/Users/david/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.3/Drivers/CMSIS/DSP/Include",
+                "C:/Users/david/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.3/Drivers/BSP/STM32G4xx_Nucleo"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE",
+                "STM32G474xx"
+            ],
+            "configurationProvider": "go2sh.cmake-integration"
+        }
+    ],
+    "version": 4
+}
